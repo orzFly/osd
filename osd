@@ -126,7 +126,7 @@ end
 timer = Thread.new do
   font = <<EOF.split("\n").map{|i|i.split('|')}
 █▀▀█| ▄█ |█▀▀█|█▀▀█|█  █|█▀▀▀|█▀▀▀|█▀▀█|█▀▀█|█▀▀█
-█  █|  █ | ▄▀ |▄ ▀█|▀▀▀█|▀▀▀█|█▀▀█|   █|█▀▀█|▀▀▀█
+*  *|  * | ▄▀ |▄ ▀*|▀▀▀*|▀▀▀█|*▀▀█|   *|*▀▀*|▀▀▀*
 ▀▀▀▀|  ▀ |▀▀▀▀|▀▀▀▀|   ▀|▀▀▀▀|▀▀▀▀|   ▀|▀▀▀▀|▀▀▀▀
 EOF
   left = 63
@@ -145,7 +145,17 @@ EOF
           3.times do |i|
             setpos i, left + 5 * x + (x > 1 ? 2 : 0)
             
-            addstr font[i][d.to_i]
+            font[i][d.to_i].split('').each do |st|
+              if st == "*"
+                attrset A_STANDOUT
+                attron(color_pair(2))
+                addstr " "
+              else
+                attrset A_NORMAL
+                attron(color_pair(2))
+                addstr st
+              end
+            end
           end
         end
         attrset A_NORMAL
@@ -156,6 +166,10 @@ EOF
           setpos 1, left+10
           addstr "▄"
         end
+        setpos 3, 62
+        addstr now.strftime("%Y-%m-%d 星期" + "日一二三四五六"[now.wday])
+        setpos 3, 82
+        addstr now.strftime(":%S")
       rescue
       end
     }
