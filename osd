@@ -123,7 +123,48 @@ def clearrange(x, y, w, h)
   end
 end
 
+timer = Thread.new do
+  font = <<EOF.split("\n").map{|i|i.split('|')}
+█▀▀█| ▄█ |█▀▀█|█▀▀█|█  █|█▀▀▀|█▀▀▀|█▀▀█|█▀▀█|█▀▀█
+█  █|  █ | ▄▀ |▄ ▀█|▀▀▀█|▀▀▀█|█▀▀█|   █|█▀▀█|▀▀▀█
+▀▀▀▀|  ▀ |▀▀▀▀|▀▀▀▀|   ▀|▀▀▀▀|▀▀▀▀|   ▀|▀▀▀▀|▀▀▀▀
+EOF
+  left = 63
+  blk = true
+  while true
+    scrlck.synchronize {
+      begin
+        attrset A_NORMAL
+        clearrange 62, 0, 23, 3
+        setpos 0, left
+        attron(color_pair(2))
+
+        now = Time.now
+        digi = now.strftime('%H%M').split('')
+        digi.each_with_index do |d,x|
+          3.times do |i|
+            setpos i, left + 5 * x + (x > 1 ? 2 : 0)
+            
+            addstr font[i][d.to_i]
+          end
+        end
+        attrset A_NORMAL
+        attron(color_pair(2))
+        if blk = !blk
+          setpos 0, left+10
+          addstr "▄"
+          setpos 1, left+10
+          addstr "▄"
+        end
+      rescue
+      end
+    }
+    sleep 1
+  end
+end
+
 pm25 = Thread.new do
+  top = 4
   getpm25 = lambda {
     body = open 'https://www.soupm25.com/ajax.php?mod=citydata&cityid=32' do |io| io.read end rescue nil
     result = {}
@@ -172,42 +213,42 @@ pm25 = Thread.new do
     scrlck.synchronize {
       begin
         attrset A_STANDOUT
-        clearrange 62, 0, 23, 1
-        setpos 0, 62
+        clearrange 62, top + 0, 23, 1
+        setpos top + 0, 62
         time = Time.at data['citydata']['lasttime'].to_i
         addstr time.strftime "空气质量    %m/%d %H:%M"
         
         attrset A_NORMAL
-        clearrange 62, 1, 23, 3
+        clearrange 62, top + 1, 23, 3
         
-        setpos 1, 62
+        setpos top + 1, 62
         addstr "PM2.5"
         addstr "*" if data['citydata']['aqitype'] != '1'
         setcolor.(data['citydata']['aqi25'].to_i)
-        setpos 1, 70
+        setpos top + 1, 70
         addstr " %s" % levelstr.(data['citydata']['aqi25'].to_i)
-        setpos 1, 82
+        setpos top + 1, 82
         addstr "%3d" % data['citydata']['aqi25'].to_i
         resetcolor.()
 
         attrset A_NORMAL
-        setpos 2, 62
+        setpos top + 2, 62
         addstr "*" if data['citydata']['aqitype'] == '1'
         addstr "PM10"
         setcolor.(data['citydata']['aqi10'].to_i)
-        setpos 2, 70
+        setpos top + 2, 70
         addstr " %s" % levelstr.(data['citydata']['aqi10'].to_i)
-        setpos 2, 82
+        setpos top + 2, 82
         addstr "%3d" % data['citydata']['aqi10'].to_i
         resetcolor.()
       rescue
         attrset A_STANDOUT
-        clearrange 62, 0, 23, 1
-        setpos 0, 62
+        clearrange 62, top + 0, 23, 1
+        setpos top + 0, 62
         addstr "空气质量 - 不可用"
         attrset A_NORMAL
-        clearrange 62, 1, 23, 3
-        setpos 1, 62
+        clearrange 62, top + 1, 23, 3
+        setpos top + 1, 62
         addstr $!.message
       end
       refresh
