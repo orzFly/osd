@@ -1,0 +1,162 @@
+#!/usr/bin/env ruby
+require 'sinatra'
+require 'sqlite3'
+Rack::Utils.key_space_limit = 2621440
+
+$arp = {}
+$db = SQLite3::Database.new "/root/osd/osd.db"
+at_exit do $db.close end
+
+$db.execute "CREATE TABLE IF NOT EXISTS host(id int, mac text)"
+$db.execute "CREATE TABLE IF NOT EXISTS interface(id int, interface text)"
+$db.execute "CREATE TABLE IF NOT EXISTS bandwidth(start int, end int, host int, if int, dir int, byte int, packet int)"
+
+$host={}
+stm = $db.prepare "SELECT id,mac FROM host"
+rs = stm.execute
+rs.each do |row|
+  $host[row[1]] = row[0]
+end
+stm.close
+
+def host(mac)
+  mac = mac.downcase
+  if $host[mac]
+    return $host[mac]
+  else
+    id = ($host.values.max || 0).next
+    stm = $db.prepare "INSERT INTO host(id,mac) VALUES (?,?)"
+    stm.bind_params id,mac
+    stm.execute
+    stm.close
+    return $host[mac] = id
+  end
+end
+
+$interface={}
+stm = $db.prepare "SELECT id,interface FROM interface"
+rs = stm.execute
+rs.each do |row|
+  $interface[row[1]] = row[0]
+end
+stm.close
+
+def interface(interface)
+  interface = interface.downcase
+  if $interface[interface]
+    return $interface[interface]
+  else
+    id = ($interface.values.max || 0).next
+    stm = $db.prepare "INSERT INTO interface(id,interface) VALUES (?,?)"
+    stm.bind_params id,interface
+    stm.execute
+    stm.close
+    return $interface[interface] = id
+  end
+end
+
+before do
+  request.body.rewind
+  @request_payload = request.body.read
+end
+
+queue = []
+last = []
+
+post '/bwmon/:from/:to' do
+  from = params[:from].to_i(10)
+  to = params[:to].to_i(10)
+
+  result = @request_payload
+  items = result.split("\n").map { |i| i.gsub(/^ +/, "").split(/ +/) }.select { |i| i.length == 9 }
+  items.shift
+
+  re = []
+  items.each do |pkts, bytes, target, prot, opt, iin, iout, source, destination|
+    interface = iin == "*" ? iout : iin
+    direction = source == "0.0.0.0/0" ? :rx : :tx
+    byte = bytes.to_i(10)
+    packet = pkts.to_i(10)
+    host = source == "0.0.0.0/0" ? destination : source
+    host = $arp[host] || host
+
+    if packet > 0
+      re << [from, to, host, interface, direction == :rx ? 0 : 1, byte] 
+      queue << lambda {
+        begin
+          stm = $db.prepare "INSERT INTO bandwidth(start,end,host,if,dir,byte,packet) VALUES (?,?,?,?,?,?,?)"
+          stm.bind_params from, to, host(host), interface(interface), direction == :rx ? 0 : 1, byte, packet
+          rs = stm.execute
+          stm.close
+        rescue
+          stm.close
+          raise
+        end
+      }
+      p p "submit task #{queue.length}"
+    end
+  end
+  last = re
+
+  "OK"
+end
+
+Thread.new do
+  loop do
+    while queue.length > 0
+      task = queue.shift
+      begin
+        task.call
+        p "resolved task #{queue.length}"
+      rescue
+        p "task error!  #{queue.length}"
+        sleep 1
+        queue.push task
+      end
+    end
+    sleep 1
+  end
+end
+
+post '/arp' do
+  table = {}
+  result = @request_payload
+  items = result.split("\n").map { |i| i.gsub(/^ +/, "").split(/ +/) }.select { |i| i.length == 6 }
+  items.each do |ip, hw, flags, mac, mask, dev|
+    table[ip] = mac
+  end
+  $arp = table
+
+  "OK"
+end
+
+get '/arp' do
+  $arp.inspect
+end
+
+get '/bwmon' do
+  return last.inspect
+  begin
+    stm = $db.prepare "
+    SELECT start,end,H.mac,I.interface,dir,byte FROM bandwidth B
+    JOIN host AS H ON B.host=H.id
+    JOIN interface AS I ON B.if=I.id
+    ORDER BY B.start DESC LIMIT 100"
+    first = nil
+    rs = stm.execute
+    bw = []
+    rs.each do |row|
+      first ||= row[0]
+      break if row[0] != first
+      bw << row
+    end
+    stm.close
+    bw.inspect
+  rescue
+    stm.close
+    "nil"
+  end
+end
+
+Sinatra::Application.run!
+exit

@@ -1,0 +1,424 @@
+#!/usr/bin/env ruby
+require 'open-uri'
+require "curses"
+require 'sqlite3'
+require 'thread'
+require 'nokogiri'
+require 'json'
+scrlck = Mutex.new
+include Curses
+
+class Menu
+  attr_reader :window
+  attr_reader :items
+
+  def initialize(x = 0, y = 0, width = 80, height = 25, items = [])
+    @x, @y, @width, @height = x, y, width, height
+    @items = items
+    @index = 0
+    @scroll = 0
+  end
+
+  def visible_first
+    @scroll
+  end
+
+  def visible_last
+    [@items.count - 1, @scroll + @height - 3].min
+  end
+
+  def visible_range
+    visible_first..visible_last
+  end
+
+  def scroll
+    @scroll
+  end
+
+  def scroll=(v)
+    max = [0, @items.count + 2 - @height].max
+    @scroll = [v, max].min
+  end
+
+  def scroll_to index
+    while index > visible_last
+      self.scroll += 1
+    end
+    while index < visible_first
+      self.scroll -= 1
+    end
+  end
+
+  def refresh
+    @window.clear
+    active = [1, 1]
+    @items.each_with_index { |i, index|
+      next unless visible_range.include? index
+      @window.setpos index + 1 - @scroll, 1
+      @window.attrset(A_NORMAL)
+      @window.addstr " " * (@width - 2)
+
+      @window.setpos index + 1 - @scroll, 1
+      @window.attrset(index == @index ? A_STANDOUT : A_NORMAL)
+      @window.addstr i
+      active = [index + 1 - @scroll, 1] if index == @index
+    }
+    @window.attrset A_NORMAL
+    @window.box '|', '-'
+    @window.setpos *active
+  end
+
+  def run
+    @window = Window.new @height, @width, @y, @x
+    $refreshable.push @window
+    refresh
+    while ch = @window.getch
+      case ch
+      when 'w'
+        @index -= 1
+      when 's'
+        @index += 1
+      when 'x'
+        exit
+      when 27
+        ch = @window.getch
+        case ch
+        when '['
+          ch = @window.getch
+          case ch
+          when 'A'
+            @index -= 1
+          when 'B'
+            @index += 1
+          end
+        end
+      end
+      @index += @items.count
+      @index %= @items.count
+      scroll_to @index
+      refresh
+    end
+    $refreshable.remove @window
+    @window.close
+    @window = nil
+  end
+end
+
+
+# RX is receive, incoming. TX is transmitting, outgoing.
+
+init_screen
+start_color
+noecho
+start_color
+init_pair 1, COLOR_RED, COLOR_BLACK
+init_pair 2, COLOR_GREEN, COLOR_BLACK
+init_pair 3, COLOR_YELLOW, COLOR_BLACK
+init_pair 4, COLOR_BLACK, COLOR_RED
+
+def clearrange(x, y, w, h)
+  for yy in y...y+h
+    setpos yy, x
+    addstr " " * w
+  end
+end
+
+pm25 = Thread.new do
+  getpm25 = lambda {
+    body = open 'https://www.soupm25.com/ajax.php?mod=citydata&cityid=32' do |io| io.read end rescue nil
+    result = {}
+    if body
+      result = JSON.parse body
+    end
+    result
+  }
+  setcolor = lambda { |i|
+    if i > 200
+      attron(color_pair(4))
+    elsif i > 100
+      attron(color_pair(1))
+    elsif i > 50
+      attron(color_pair(3))
+    else
+      attron(color_pair(2))
+    end
+  }
+  resetcolor = lambda {
+    attrset A_STANDOUT
+  }
+  levelstr = lambda { |i|
+    if i > 300
+      return "危险"
+    elsif i > 200
+      return "很不健康"
+    elsif i > 100
+      return "不健康"
+    elsif i > 50
+      return "中"
+    else
+      return "优"
+    end
+  }
+  data = nil
+  while true
+    new_data = getpm25.()
+    if new_data
+      data = new_data
+      open 'pm25', "wb" do |io| io.write Marshal.dump data end
+    end
+    if !data
+      data = open 'pm25', 'rb' do |io| Marshal.load io.read end
+    end
+    scrlck.synchronize {
+      begin
+        attrset A_STANDOUT
+        clearrange 62, 0, 23, 1
+        setpos 0, 62
+        time = Time.at data['citydata']['lasttime'].to_i
+        addstr time.strftime "空气质量    %m/%d %H:%M"
+        
+        attrset A_NORMAL
+        clearrange 62, 1, 23, 3
+        
+        setpos 1, 62
+        addstr "PM2.5"
+        addstr "*" if data['citydata']['aqitype'] != '1'
+        setcolor.(data['citydata']['aqi25'].to_i)
+        setpos 1, 70
+        addstr " %s" % levelstr.(data['citydata']['aqi25'].to_i)
+        setpos 1, 82
+        addstr "%3d" % data['citydata']['aqi25'].to_i
+        resetcolor.()
+
+        attrset A_NORMAL
+        setpos 2, 62
+        addstr "*" if data['citydata']['aqitype'] == '1'
+        addstr "PM10"
+        setcolor.(data['citydata']['aqi10'].to_i)
+        setpos 2, 70
+        addstr " %s" % levelstr.(data['citydata']['aqi10'].to_i)
+        setpos 2, 82
+        addstr "%3d" % data['citydata']['aqi10'].to_i
+        resetcolor.()
+      rescue
+        attrset A_STANDOUT
+        clearrange 62, 0, 23, 1
+        setpos 0, 62
+        addstr "空气质量 - 不可用"
+        attrset A_NORMAL
+        clearrange 62, 1, 23, 3
+        setpos 1, 62
+        addstr $!.message
+      end
+      refresh
+    }
+    sleep 60
+  end
+end
+
+bwmon = Thread.new do
+
+  zone = {
+    "sum" => [],
+    "lwan" => [ "pppoe-lwan" ],
+    "gfw" => [ "tun+" ],
+    "wan" => [ "eth0.3", "pppoe-wan_uni" ]
+  }
+  rzone = {}
+  zone.each do |k, v|
+    v.each do |i|
+      rzone[i] = k
+    end
+  end
+
+  width = 60
+
+  last_bw = nil
+  updatetitle = lambda {
+    if last_bw
+      scrlck.synchronize {
+        setpos 0, 0
+        attrset A_STANDOUT
+        addstr " " * width
+        setpos 0, 0
+        addstr "流量 (#{last_bw[0][1] - last_bw[0][0]} 秒平均) - #{Time.now.to_i - last_bw[0][1]} 秒前"
+
+        zone.keys.each_with_index do |i, index|
+          setpos 0, width - (index + 1) * 7 + 1
+          addstr "%5s" % (i == "sum" ? "Σ" : i)
+        end
+        attrset A_NORMAL
+        refresh
+      }
+    end
+  }
+
+  while true
+    bw = (open 'http://127.0.0.1:4567/bwmon' do |io| eval io.read end rescue nil)
+
+    unless bw && (bw.is_a?(Array) && bw.length > 0) && last_bw != bw
+      5.times do
+        updatetitle.call
+        sleep 1
+      end
+      next
+    end
+    hosts = Hash[File.read('hosts').split("\n").map{|i|a=i.split(" ", 2);[a.first.downcase,a.last]}]
+    arp = (open 'http://127.0.0.1:4567/arp' do |io| eval io.read end rescue nil)
+    rarp = {}
+    arp.each do |k, v| rarp[v] = k end if arp
+    last_bw = bw
+
+    bws = bw.group_by{|i| i[2]}.map do |k, v|
+      pp = v.group_by{|i|[i[4], rzone[i[3]]]}
+      sum = [0, 0]
+      pp.keys.each do |group|
+        pp[group] = pp[group].inject(0){|i,k|i += k[5]}
+        sum[group[0]] += pp[group]
+      end
+      pp[[0, "sum"]] = sum[0]
+      pp[[1, "sum"]] = sum[1]
+      [k, pp]
+    end
+
+    bws = bws.sort_by {|i| i[1][[0, "sum"]] + i[1][[1, "sum"]]}.reverse
+
+    sum = {}
+    bws.each do |k,v|
+      v.each do |group, value|
+        sum[group] ||= 0
+        sum[group] += value
+      end
+    end
+    bws << ["sum", sum]
+    timestart = Time.at(bw[0][0]).strftime("%H:%M:%S")
+    timeend = Time.at(bw[0][1]).strftime("%H:%M:%S")
+    timelen = bw[0][1] - bw[0][0]
+
+    scrlck.synchronize {
+      limit = 9
+      attrset A_NORMAL
+      clearrange 0, 0, width, 3 + limit * 2
+
+      setpos 0, 0
+      attrset A_STANDOUT
+      addstr " " * width
+      setpos 0, 0
+      addstr "流量 (#{bw[0][1] - bw[0][0]} 秒平均) - #{Time.now.to_i - bw[0][1]} 秒前"
+
+      zone.keys.each_with_index do |i, index|
+        setpos 0, width - (index + 1) * 7 + 1
+        addstr "%5s" % (i == "sum" ? "Σ" : i)
+      end
+
+      attrset A_NORMAL
+      setpos limit * 2 + 1, 0
+      attrset A_STANDOUT
+      addstr " Σ "
+      attrset A_NORMAL
+      addstr " ... "
+      if bws.length > limit
+        addstr "(+ #{bws.length - limit})"
+      end
+
+      attron A_UNDERLINE
+      clearrange 0, limit * 2, width, 1
+      attroff A_UNDERLINE
+      bws.each_with_index do |i, index|
+        next if index >= limit && i[0] != "sum"
+        index = limit if i[0] == "sum"
+
+        host = i[0]
+        data = i[1]
+
+        unless i[0] == "sum"
+          setpos index * 2 + 1, 0
+          addstr "#{host} - #{rarp[host]}"
+
+          setpos index * 2 + 2, 2
+          attron A_UNDERLINE if index + 1 == limit
+          addstr hosts[host] if hosts[host]
+          attroff A_UNDERLINE if index + 1 == limit
+        end
+
+        setpos index * 2 + 1, width - (zone.keys.count) * 7 - 1
+        attron(color_pair(2))
+        addstr "↓"
+        attroff(color_pair(2))
+
+        setpos index * 2 + 2, width - (zone.keys.count) * 7 - 1
+        attron A_UNDERLINE if index + 1 == limit
+        attron(color_pair(1))
+        addstr "↑"
+        attroff(color_pair(1))
+        attroff A_UNDERLINE if index + 1 == limit
+
+        2.times do |dir|
+          zone.keys.each_with_index do |i, i2|
+            setpos index * 2 + 1 + dir, width - (i2 + 1) * 7 + 1
+
+            d = data[[dir, i]] || 0
+            d /= 1.0 * timelen
+            d *= 8.0
+
+            unit = " "
+            if d >= 1000
+              d /= 1024.0
+              unit = "K"
+            end
+            if d >= 1000
+              d /= 1024.0
+              unit = "M"
+            end
+            if d >= 1000
+              d /= 1024.0
+              unit = "G"
+            end
+            attron A_UNDERLINE if index + 1 == limit && dir == 1
+            attron(color_pair(2)) if unit == "M"
+            attron(color_pair(3)) if unit == "K"
+            addstr "%5.1f%c" % [d, unit]
+            attroff(color_pair(2)) if unit == "M"
+            attroff(color_pair(3)) if unit == "K"
+            attroff A_UNDERLINE if index + 1 == limit && dir == 1
+          end
+        end
+      end
+      refresh
+    }
+  end
+end
+
+statusbar = Thread.new do
+  loop do
+    scrlck.synchronize {
+      attrset A_STANDOUT
+      clearrange 0, 21, 85, 1
+      setpos 21,0
+      addstr "#{Time.now.strftime("%Y-%m-%d")}#{`uptime`}"
+      refresh
+    }
+    sleep 1
+  end
+end
+=begin
+result = `iw wlan0 scan`
+
+aps = result.split(/^BSS/).select { |i| i.length > 0 }
+ssids = aps.map { |ap|
+  ap[/^\tSSID: (.*)$/] ? $1 : nil
+}.sort.uniq.map { |i|
+  i.gsub(/\\x(..)/) { $1.to_i(16).chr }.force_encoding("utf-8")
+}
+
+p ssids
+
+menu = Menu.new 0, 0, 20, 10, ssids
+menu.run
+=end
+
+bwmon.join
+statusbar.join
+pm25.join
+
+exit
