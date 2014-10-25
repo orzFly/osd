@@ -116,6 +116,8 @@ init_pair 1, COLOR_RED, COLOR_BLACK
 init_pair 2, COLOR_GREEN, COLOR_BLACK
 init_pair 3, COLOR_YELLOW, COLOR_BLACK
 init_pair 4, COLOR_BLACK, COLOR_RED
+init_pair 5, COLOR_BLACK, COLOR_GREEN
+init_pair 6, COLOR_BLACK, COLOR_YELLOW
 
 def clearrange(x, y, w, h)
   for yy in y...y+h
@@ -171,6 +173,29 @@ EOF
         addstr now.strftime("%Y-%m-%d 星期" + "日一二三四五六"[now.wday])
         setpos 3, 82
         addstr now.strftime(":%S")
+
+        attrset A_NORMAL
+        setpos 4, 62
+        addstr '周:一 二 三 四 五 六 日'
+        setpos 5, 62
+        monday = Date.today
+        today = Date.today
+        monday -= 1 while !monday.monday?
+        addstr '%02d' % ((monday.cweek < 35 ? 52 : 0) + monday.cweek - 35)
+        addstr ':'
+        7.times do |i|
+          if monday.day != today.day
+            attrset A_NORMAL
+          else
+            attrset A_STANDOUT
+          end
+          attron(color_pair(2)) if i >= 5
+          addstr monday.strftime("%d")
+
+          attrset A_NORMAL
+          addstr ' ' unless i == 6
+          monday += 1
+        end
       rescue
       end
     }
@@ -179,7 +204,7 @@ EOF
 end
 
 pm25 = Thread.new do
-  top = 4
+  top = 6
   getpm25 = lambda {
     body = open 'https://www.soupm25.com/ajax.php?mod=citydata&cityid=32' do |io| io.read end rescue nil
     result = {}
@@ -274,7 +299,7 @@ end
 
 
 weather = Thread.new do
-  top = 7
+  top = 9
   getweather = lambda {|d=0|
     body = open 'http://php.weather.sina.com.cn/xml.php?city=%d5%f2%bd%ad&password=DJOYnieT8234jlsK&day='+d do |io| io.read end rescue nil
   }
