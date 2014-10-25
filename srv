@@ -63,6 +63,16 @@ end
 queue = []
 last = []
 
+$ping = ""
+
+get '/ping' do
+  $ping
+end
+
+post '/ping' do
+  $ping = @request_payload
+end
+
 post '/bwmon/:from/:to' do
   from = params[:from].to_i(10)
   to = params[:to].to_i(10)

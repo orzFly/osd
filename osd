@@ -436,6 +436,20 @@ weather = Thread.new do
   end
 end
 
+$status = {}
+
+netcheck = Thread.new do
+  while true
+    result = open 'http://127.0.0.1:4567/ping' do |io| io.read end rescue nil
+    if result
+      result.split('&').each{|i|
+        ifname, status = i.split('=')
+        $status[ifname.to_sym] = status.to_i == 0 ? true : false
+      }
+    end
+    sleep 10
+  end
+end
 
 bwmon = Thread.new do
 
@@ -452,21 +466,53 @@ bwmon = Thread.new do
     end
   end
 
+  top = 0
+  limit = 9
   width = 60
 
+  beforename = lambda { |i|
+    if i == "wan"
+      if $status[:wan]
+        attron(color_pair(2))
+      elsif $status[:wwan]
+        attron(color_pair(3))
+      else
+        attron(color_pair(1))
+      end
+      return " 公网"
+    elsif i == "lwan"
+      if $status[:lwan]
+        attron(color_pair(2))
+      else
+        attron(color_pair(1))
+      end
+      return " 校园"
+    elsif i == "gfw"
+      if $status[:gfw]
+        attron(color_pair(2))
+      else
+        attron(color_pair(1))
+      end
+      return " 加密"
+    elsif i == "sum"
+      return "    Σ"
+    end
+    "%5s" % i
+  }
   last_bw = nil
   updatetitle = lambda {
     if last_bw
       scrlck.synchronize {
-        setpos 0, 0
+        setpos top+0, 0
         attrset A_STANDOUT
         addstr " " * width
-        setpos 0, 0
+        setpos top+0, 0
         addstr "流量 (#{last_bw[0][1] - last_bw[0][0]} 秒平均) - #{Time.now.to_i - last_bw[0][1]} 秒前"
 
         zone.keys.each_with_index do |i, index|
-          setpos 0, width - (index + 1) * 7 + 1
-          addstr "%5s" % (i == "sum" ? "Σ" : i)
+          setpos top+0, width - (index + 1) * 7 + 1
+          attrset A_STANDOUT
+          addstr beforename.(i)
         end
         attrset A_NORMAL
         refresh
@@ -517,23 +563,23 @@ bwmon = Thread.new do
     timelen = bw[0][1] - bw[0][0]
 
     scrlck.synchronize {
-      limit = 9
       attrset A_NORMAL
-      clearrange 0, 0, width, 3 + limit * 2
+      clearrange 0, top+0, width, 3 + limit * 2
 
-      setpos 0, 0
+      setpos top+0, 0
       attrset A_STANDOUT
       addstr " " * width
-      setpos 0, 0
+      setpos top+0, 0
       addstr "流量 (#{bw[0][1] - bw[0][0]} 秒平均) - #{Time.now.to_i - bw[0][1]} 秒前"
 
       zone.keys.each_with_index do |i, index|
-        setpos 0, width - (index + 1) * 7 + 1
-        addstr "%5s" % (i == "sum" ? "Σ" : i)
+        setpos top+0, width - (index + 1) * 7 + 1
+        attrset A_STANDOUT
+        addstr beforename.(i)
       end
 
       attrset A_NORMAL
-      setpos limit * 2 + 1, 0
+      setpos top+limit * 2 + 1, 0
       attrset A_STANDOUT
       addstr " Σ "
       attrset A_NORMAL
@@ -543,7 +589,7 @@ bwmon = Thread.new do
       end
 
       attron A_UNDERLINE
-      clearrange 0, limit * 2, width, 1
+      clearrange 0, top+limit * 2, width, 1
       attroff A_UNDERLINE
       alwaysunderline = false
       bws.each_with_index do |i, index|
@@ -554,21 +600,21 @@ bwmon = Thread.new do
         data = i[1]
 
         unless i[0] == "sum"
-          setpos index * 2 + 1, 0
+          setpos top+index * 2 + 1, 0
           addstr "#{host} - #{rarp[host]}"
 
-          setpos index * 2 + 2, 2
+          setpos top+index * 2 + 2, 2
           attron A_UNDERLINE if alwaysunderline || index + 1 == limit
           addstr hosts[host] if hosts[host]
           attroff A_UNDERLINE if alwaysunderline || index + 1 == limit
         end
 
-        setpos index * 2 + 1, width - (zone.keys.count) * 7 - 1
+        setpos top+index * 2 + 1, width - (zone.keys.count) * 7 - 1
         attron(color_pair(2))
         addstr "↓"
         attroff(color_pair(2))
 
-        setpos index * 2 + 2, width - (zone.keys.count) * 7 - 1
+        setpos top+index * 2 + 2, width - (zone.keys.count) * 7 - 1
         attron A_UNDERLINE if alwaysunderline || index + 1 == limit
         attron(color_pair(1))
         addstr "↑"
@@ -577,7 +623,7 @@ bwmon = Thread.new do
 
         2.times do |dir|
           zone.keys.each_with_index do |i, i2|
-            setpos index * 2 + 1 + dir, width - (i2 + 1) * 7 + 1
+            setpos top+index * 2 + 1 + dir, width - (i2 + 1) * 7 + 1
 
             d = data[[dir, i]] || 0
             d /= 1.0 * timelen
