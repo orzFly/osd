@@ -1,0 +1,19 @@
+#!/bin/bash
+gfwip=$(ifconfig tun50 2>/dev/null| grep 'P-t-P:' | sed 's/^.*P-t-P://g;s/  .*$//g')
+if [ -z "$gfwip" ]; then
+  gfwresult=1
+else
+  ping -c1 -W1 -w1 $gfwip>/dev/null
+  gfwresult=$?
+fi
+
+ifconfig pppoe-wan_uni >/dev/null 2>/dev/null
+wanresult=$?
+
+ifconfig pppoe-lwan >/dev/null 2>/dev/null
+lwanresult=$?
+
+ping -c1 -W1 -w1 211.138.195.31>/dev/null
+wwanresult=$?
+
+echo "gfw=$gfwresult&wan=$wanresult&lwan=$lwanresult&wwan=$wwanresult" | curl --data-binary @- http://loongson:4567/ping

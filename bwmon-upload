@@ -1,0 +1,16 @@
+#!/bin/bash
+
+cat /proc/net/arp | grep br-lan | curl --data-binary @- http://loongson:4567/arp
+
+now=$(date +"%s")
+if [ -f "/tmp/bwmon.last" ]
+then
+	last=$(cat /tmp/bwmon.last)
+	iptables -L RRDIPT -vnxZ -t filter | curl --data-binary @- http://loongson:4567/bwmon/$last/$now
+else
+	now=$now
+fi
+
+echo $now > /tmp/bwmon.last
+
+bwmon-ping

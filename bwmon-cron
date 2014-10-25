@@ -1,0 +1,8 @@
+#!/bin/bash
+OUTPUT=`ps | grep '[b]wmon-daemon'`
+if [ "$OUTPUT" ]
+then
+echo running
+else
+bash /sbin/bwmon-daemon
+fi

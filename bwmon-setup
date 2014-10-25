@@ -1,0 +1,27 @@
+#!/bin/bash
+
+iptables -N RRDIPT 2> /dev/null
+
+iptables -L FORWARD --line-numbers -n | grep "RRDIPT" | grep "1" > /dev/null
+if [ $? -ne 0 ]; then
+  iptables -L FORWARD -n | grep "RRDIPT" > /dev/null
+  if [ $? -eq 0 ]; then
+    iptables -D FORWARD -j RRDIPT
+  fi
+  iptables -I FORWARD -j RRDIPT
+fi
+
+grep br-lan /proc/net/arp | while read IP TYPE FLAGS MAC MASK IFACE ;
+do
+  iptables -nL RRDIPT | grep "${IP} " > /dev/null
+  if [ $? -ne 0 ]; then
+    iptables -I RRDIPT -d ${IP} -i pppoe-lwan -j RETURN
+    iptables -I RRDIPT -s ${IP} -o pppoe-lwan -j RETURN
+    iptables -I RRDIPT -d ${IP} -i pppoe-wan_uni -j RETURN
+    iptables -I RRDIPT -s ${IP} -o pppoe-wan_uni -j RETURN
+    iptables -I RRDIPT -d ${IP} -i eth0.3 -j RETURN
+    iptables -I RRDIPT -s ${IP} -o eth0.3 -j RETURN
+    iptables -I RRDIPT -d ${IP} -i tun+ -j RETURN
+    iptables -I RRDIPT -s ${IP} -o tun+ -j RETURN
+  fi
+done  
