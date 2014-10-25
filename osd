@@ -663,7 +663,7 @@ statusbar = Thread.new do
       attrset A_STANDOUT
       clearrange 0, 21, 85, 1
       setpos 21,0
-      addstr "#{Time.now.strftime("%Y-%m-%d")}#{`uptime`}"
+      addstr "#{Time.now.strftime("%Y-%m-%d")}#{`uptime`.chomp}"
       refresh
     }
     sleep 1
